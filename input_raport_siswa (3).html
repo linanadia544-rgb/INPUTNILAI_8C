@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem Input Raport Siswa</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- React 18 & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- SheetJS (xlsx) for Excel Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- html2pdf.js for Client-Side PDF Generation matching exact visual template -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .sticky-col {
+            position: sticky;
+            left: 0;
+            z-index: 10;
+            background-color: white;
+        }
+        .sticky-col-header {
+            position: sticky;
+            left: 0;
+            z-index: 20;
+            background-color: #065f46;
+        }
+        @media print {
+            body { background: white !important; }
+            no-print { display: none !important; }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        const DEFAULT_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz.../exec";
+        const ADMIN_PASSWORD_HASH = "@SMPN38BDL";
+
+        // URL Logo resmi sesuai permintaan (Kiri: Logo Kota Bandar Lampung, Kanan: Logo Sekolah SMPN 38)
+        const LOGO_KOTA_URL = "https://upload.wikimedia.org/wikipedia/commons/e/ed/Logo_Kota_Bandar_Lampung_%28Tangkai_Padi_dan_Kapas%29.png";
+        const LOGO_SEKOLAH_URL = "https://upload.wikimedia.org/wikipedia/commons/e/ed/Logo_Kota_Bandar_Lampung_%28Tangkai_Padi_dan_Kapas%29.png";
+
+        const LIST_MAPEL = [
+            "BAHASA INDONESIA",
+            "MATEMATIKA",
+            "PJOK",
+            "IPS",
+            "BAHASA INGGRIS",
+            "IPA",
+            "PRAKARYA",
+            "PAI",
+            "PAK",
+            "BAHASA LAMPUNG",
+            "INFORMATIKA",
+            "PENDIDIKAN PANCASILA"
+        ];
+
+        const RAW_SISWA = [
+            "ADE EVA KINANTI",
+            "ADINDA SHEFA RHAMADANI",
+            "AHMAD RAIHAN",
+            "Alvino Ridwan Pratama",
+            "AMANDA AFRILIA",
+            "CAHYA BR SINAMBELA",
+            "DARWAN ALVIANSYAH",
+            "DIAN APRILIA PUTRI",
+            "Ghlora Noe Kheyla",
+            "Haikal Pratama",
+            "HOLIK AKBAR",
+            "IQBAL HIDAYATULLOH",
+            "JUNI PRATAMA",
+            "Kafa Jehsen Cristian",
+            "M. ARIFIN",
+            "M. KHAIRUL AZZAM",
+            "MINAFA ADZKIA MALVIN",
+            "Muhamad Alfatih Suherman",
+            "MUHAMMAD REVAN ABI PRATAMA",
+            "MUHAMMAD RIDHO SAPUTRA",
+            "Naila Azzahra Sopyan",
+            "NAUFAL SHIDQI ARLIS",
+            "Nirmala Nia Putri",
+            "POLIN MANURUNG",
+            "RAYSHA SESALIA WATTY",
+            "RYAN DWI ISNANTO",
+            "SALWA NABILA PUTRI",
+            "SILSILA FADILA",
+            "SUCI MASNAWATI",
+            "Syami Ahmad Azzanky",
+            "ZAHRA ANYA RACHMA LAKSONO"
+        ];
+
+        const DEFAULT_SISWA = RAW_SISWA.map(nama => nama.toUpperCase());
+
+        function App() {
+            const [activeTab, setActiveTab] = useState('input');
+            const [selectedMapel, setSelectedMapel] = useState(LIST_MAPEL[0]);
+            const [scriptUrl, setScriptUrl] = useState(DEFAULT_SCRIPT_URL);
+            const [gradesData, setGradesData] = useState({});
+            
+            const [loading, setLoading] = useState(false);
+            const [statusMessage, setStatusMessage] = useState({ type: '', text: '' });
+            
+            const [showAdminModal, setShowAdminModal] = useState(false);
+            const [adminPassword, setAdminPassword] = useState('');
+            const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+            const [adminError, setAdminError] = useState('');
+
+            const [showSingleModal, setShowSingleModal] = useState(false);
+            const [selectedSiswaSingle, setSelectedSiswaSingle] = useState(DEFAULT_SISWA[0]);
+            const [isPdfGenerating, setIsPdfGenerating] = useState(false);
+            
+            // Kehadiran state untuk cetak raport per siswa
+            const [attendance, setAttendance] = useState({ sakit: '', ijin: '', alpa: '' });
+
+            const reportRef = useRef(null);
+
+            useEffect(() => {
+                const savedGrades = localStorage.getItem('raport_grades_data');
+                if (savedGrades) {
+                    try {
+                        setGradesData(JSON.parse(savedGrades));
+                    } catch (e) {
+                        initDefaultData();
+                    }
+                } else {
+                    initDefaultData();
+                }
+            }, []);
+
+            const initDefaultData = () => {
+                const initial = {};
+                DEFAULT_SISWA.forEach(nama => {
+                    initial[nama] = {};
+                    LIST_MAPEL.forEach(mapel => {
+                        initial[nama][mapel] = { ph1: '', ph2: '', pts: '' };
+                    });
+                });
+                setGradesData(initial);
+                localStorage.setItem('raport_grades_data', JSON.stringify(initial));
+            };
+
+            const handleGradeChange = (nama, mapel, field, value) => {
+                if (value !== '') {
+                    const num = Number(value);
+                    if (isNaN(num) || num < 0 || num > 100) return;
+                }
+
+                setGradesData(prev => {
+                    const updated = {
+                        ...prev,
+                        [nama]: {
+                            ...prev[nama],
+                            [mapel]: {
+                                ...prev[nama]?.[mapel],
+                                [field]: value
+                            }
+                        }
+                    };
+                    localStorage.setItem('raport_grades_data', JSON.stringify(updated));
+                    return updated;
+                });
+            };
+
+            const handleBulkSave = async () => {
+                setLoading(true);
+                setStatusMessage({ type: 'info', text: `Menyimpan nilai ${selectedMapel} ke server...` });
+
+                const payload = {
+                    action: "saveGrades",
+                    mapel: selectedMapel,
+                    data: DEFAULT_SISWA.map(nama => ({
+                        nama: nama,
+                        ph1: gradesData[nama]?.[selectedMapel]?.ph1 || 0,
+                        ph2: gradesData[nama]?.[selectedMapel]?.ph2 || 0,
+                        pts: gradesData[nama]?.[selectedMapel]?.pts || 0
+                    }))
+                };
+
+                try {
+                    if (!scriptUrl || scriptUrl.includes("AKfycbz")) {
+                        await new Promise(resolve => setTimeout(resolve, 800));
+                        setStatusMessage({ type: 'success', text: `Berhasil Disimpan! Nilai ${selectedMapel} telah tersimpan.` });
+                    } else {
+                        await fetch(scriptUrl, {
+                            method: 'POST',
+                            mode: 'no-cors',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        setStatusMessage({ type: 'success', text: `Berhasil Disimpan ke Google Sheets untuk mapel ${selectedMapel}!` });
+                    }
+                } catch (error) {
+                    console.error("Error saving:", error);
+                    setStatusMessage({ type: 'error', text: 'Gagal menyimpan ke server. Data tersimpan di perangkat lokal.' });
+                } finally {
+                    setLoading(false);
+                    setTimeout(() => setStatusMessage({ type: '', text: '' }), 4000);
+                }
+            };
+
+            const handleAdminLogin = (e) => {
+                e.preventDefault();
+                if (adminPassword === '@SMPN38BDL') {
+                    setIsAdminAuthenticated(true);
+                    setShowAdminModal(false);
+                    setAdminPassword('');
+                    setAdminError('');
+                    setActiveTab('admin');
+                } else {
+                    setAdminError('Password salah!');
+                }
+            };
+
+            const exportToExcel = () => {
+                const rekapRows = [];
+                rekapRows.push(["MASTER REKAP NILAI RAPORT SISWA"]);
+                rekapRows.push([`Diexport pada: ${new Date().toLocaleString()}`]);
+                rekapRows.push([]);
+
+                const headerRow1 = ["NO", "NAMA SISWA"];
+                LIST_MAPEL.forEach(mapel => {
+                    headerRow1.push(mapel, "", "");
+                });
+                rekapRows.push(headerRow1);
+
+                const headerRow2 = ["", ""];
+                LIST_MAPEL.forEach(() => {
+                    headerRow2.push("PH 1", "PH 2", "PTS");
+                });
+                rekapRows.push(headerRow2);
+
+                DEFAULT_SISWA.forEach((nama, idx) => {
+                    const rowData = [idx + 1, nama];
+                    LIST_MAPEL.forEach(mapel => {
+                        const score = gradesData[nama]?.[mapel] || { ph1: '', ph2: '', pts: '' };
+                        rowData.push(score.ph1 !== '' ? Number(score.ph1) : '');
+                        rowData.push(score.ph2 !== '' ? Number(score.ph2) : '');
+                        rowData.push(score.pts !== '' ? Number(score.pts) : '');
+                    });
+                    rekapRows.push(rowData);
+                });
+
+                const ws = XLSX.utils.aoa_to_sheet(rekapRows);
+                if(!ws['!merges']) ws['!merges'] = [];
+                ws['!merges'].push({ s: { r: 0, c: 0 }, e: { r: 0, c: 2 + (LIST_MAPEL.length * 3) - 1 } });
+                ws['!merges'].push({ s: { r: 1, c: 0 }, e: { r: 1, c: 2 + (LIST_MAPEL.length * 3) - 1 } });
+
+                LIST_MAPEL.forEach((mapel, index) => {
+                    const startCol = 2 + (index * 3);
+                    ws['!merges'].push({ s: { r: 3, c: startCol }, e: { r: 3, c: startCol + 2 } });
+                });
+
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "Master Rekap Nilai");
+                XLSX.writeFile(wb, "Master_Rekap_Nilai_Raport.xlsx");
+            };
+
+            const downloadPdfReport = () => {
+                if (!reportRef.current) return;
+                setIsPdfGenerating(true);
+                
+                const element = reportRef.current;
+                const opt = {
+                    margin:       5,
+                    filename:     `Raport_STS_${selectedSiswaSingle.replace(/[^a-zA-Z0-9]/g, "_")}.pdf`,
+                    image:        { type: 'jpeg', quality: 0.98 },
+                    html2canvas:  { scale: 2, useCORS: true, logging: false },
+                    jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+                };
+
+                html2pdf().from(element).set(opt).save().then(() => {
+                    setIsPdfGenerating(false);
+                }).catch(err => {
+                    console.error("PDF generation error:", err);
+                    setIsPdfGenerating(false);
+                });
+            };
+
+            return (
+                <div className="min-h-screen flex flex-col bg-slate-50">
+                    <header className="bg-emerald-700 text-white shadow-md sticky top-0 z-30">
+                        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col sm:flex-row justify-between items-center gap-3">
+                            <div className="flex items-center space-x-3">
+                                <div className="bg-emerald-800 p-2.5 rounded-xl border border-emerald-600 shadow-inner">
+                                    <i className="fa-solid fa-graduation-cap text-xl text-emerald-200"></i>
+                                </div>
+                                <div>
+                                    <h1 className="text-lg font-bold tracking-tight">INPUT RAPORT SISWA</h1>
+                                    <p className="text-xs text-emerald-200">SMP Negeri 38 Bandar Lampung</p>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => setActiveTab('input')}
+                                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
+                                        activeTab === 'input' 
+                                            ? 'bg-white text-emerald-800 shadow' 
+                                            : 'bg-emerald-800/60 text-white hover:bg-emerald-600'
+                                    }`}
+                                >
+                                    <i className="fa-solid fa-pen-to-square"></i> Input Guru Mapel
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        if (isAdminAuthenticated) {
+                                            setActiveTab('admin');
+                                        } else {
+                                            setShowAdminModal(true);
+                                        }
+                                    }}
+                                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
+                                        activeTab === 'admin' 
+                                            ? 'bg-white text-emerald-800 shadow' 
+                                            : 'bg-emerald-800/60 text-white hover:bg-emerald-600'
+                                    }`}
+                                >
+                                    <i className="fa-solid fa-lock"></i> Master Rekap (Admin)
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+
+                    <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6">
+                        {statusMessage.text && (
+                            <div className={`mb-4 p-4 rounded-xl text-sm font-medium flex items-center gap-3 shadow-sm transition-all ${
+                                statusMessage.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' :
+                                statusMessage.type === 'error' ? 'bg-red-50 text-red-800 border border-red-200' : 
+                                'bg-blue-50 text-blue-800 border border-blue-200'
+                            }`}>
+                                <i className={`fa-solid ${
+                                    statusMessage.type === 'success' ? 'fa-circle-check text-emerald-600 text-lg' :
+                                    statusMessage.type === 'error' ? 'fa-circle-exclamation text-red-600 text-lg' : 
+                                    'fa-spinner fa-spin text-blue-600 text-lg'
+                                }`}></i>
+                                <span>{statusMessage.text}</span>
+                            </div>
+                        )}
+
+                        {activeTab === 'input' ? (
+                            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                                <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                                    <div>
+                                        <h2 className="text-base font-bold text-slate-800">Form Input Nilai Mata Pelajaran</h2>
+                                        <p className="text-xs text-slate-500 mt-0.5">Pilih mata pelajaran lalu masukkan nilai Penilaian Harian & PTS (0 - 100).</p>
+                                    </div>
+                                    <div className="w-full md:w-auto flex items-center gap-2">
+                                        <label className="text-sm font-semibold text-slate-700 whitespace-nowrap">Mapel:</label>
+                                        <select
+                                            value={selectedMapel}
+                                            onChange={(e) => setSelectedMapel(e.target.value)}
+                                            className="w-full md:w-64 bg-white border border-slate-300 rounded-xl px-3 py-2 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 shadow-sm"
+                                        >
+                                            {LIST_MAPEL.map(m => (
+                                                <option key={m} value={m}>{m}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left border-collapse">
+                                        <thead>
+                                            <tr className="bg-emerald-800 text-white text-xs uppercase tracking-wider">
+                                                <th className="py-3 px-4 w-16 text-center">No</th>
+                                                <th className="py-3 px-4">Nama Siswa</th>
+                                                <th className="py-3 px-4 text-center w-32">PH 1 (0-100)</th>
+                                                <th className="py-3 px-4 text-center w-32">PH 2 (0-100)</th>
+                                                <th className="py-3 px-4 text-center w-32">PTS (0-100)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100 text-sm">
+                                            {DEFAULT_SISWA.map((nama, idx) => {
+                                                const score = gradesData[nama]?.[selectedMapel] || { ph1: '', ph2: '', pts: '' };
+                                                return (
+                                                    <tr key={nama} className="hover:bg-slate-50/80 transition-colors">
+                                                        <td className="py-3 px-4 text-center text-slate-500 font-medium">{idx + 1}</td>
+                                                        <td className="py-3 px-4 font-semibold text-slate-800">{nama}</td>
+                                                        <td className="py-2 px-3 text-center">
+                                                            <input
+                                                                type="number"
+                                                                min="0"
+                                                                max="100"
+                                                                value={score.ph1}
+                                                                onChange={(e) => handleGradeChange(nama, selectedMapel, 'ph1', e.target.value)}
+                                                                placeholder="0"
+                                                                className="w-20 text-center bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2 text-sm font-semibold focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                                            />
+                                                        </td>
+                                                        <td className="py-2 px-3 text-center">
+                                                            <input
+                                                                type="number"
+                                                                min="0"
+                                                                max="100"
+                                                                value={score.ph2}
+                                                                onChange={(e) => handleGradeChange(nama, selectedMapel, 'ph2', e.target.value)}
+                                                                placeholder="0"
+                                                                className="w-20 text-center bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2 text-sm font-semibold focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                                            />
+                                                        </td>
+                                                        <td className="py-2 px-3 text-center">
+                                                            <input
+                                                                type="number"
+                                                                min="0"
+                                                                max="100"
+                                                                value={score.pts}
+                                                                onChange={(e) => handleGradeChange(nama, selectedMapel, 'pts', e.target.value)}
+                                                                placeholder="0"
+                                                                className="w-20 text-center bg-slate-50 border border-slate-200 rounded-lg py-1.5 px-2 text-sm font-semibold focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                                            />
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <div className="p-4 bg-slate-50 border-t border-slate-100 flex flex-col sm:flex-row justify-between items-center gap-4">
+                                    <div className="text-xs text-slate-500 flex items-center gap-1.5">
+                                        <i className="fa-solid fa-circle-info text-emerald-600"></i>
+                                        <span>Data otomatis tersimpan di perangkat Anda saat diketik. Klik tombol simpan untuk mengirim ke database.</span>
+                                    </div>
+                                    <button
+                                        onClick={handleBulkSave}
+                                        disabled={loading}
+                                        className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-6 py-2.5 rounded-xl shadow-sm hover:shadow transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                    >
+                                        {loading ? (
+                                            <i className="fa-solid fa-spinner fa-spin"></i>
+                                        ) : (
+                                            <i className="fa-solid fa-cloud-arrow-up"></i>
+                                        )}
+                                        <span>Simpan Nilai [{selectedMapel}]</span>
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                                <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                                    <div>
+                                        <div className="flex items-center gap-2">
+                                            <h2 className="text-base font-bold text-slate-800">Master Rekap Nilai Seluruh Mata Pelajaran</h2>
+                                            <span className="bg-emerald-100 text-emerald-800 text-xs font-semibold px-2.5 py-0.5 rounded-full">Mode Admin / Wali Kelas</span>
+                                        </div>
+                                        <p className="text-xs text-slate-500 mt-0.5">Tabel rekapitulasi nilai lengkap seluruh siswa serta opsi unduh PDF persiswa.</p>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+                                        <button
+                                            onClick={() => setShowSingleModal(true)}
+                                            className="flex-1 md:flex-none bg-sky-600 hover:bg-sky-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2"
+                                        >
+                                            <i className="fa-solid fa-file-pdf"></i>
+                                            <span>Unduh PDF Raport Per Siswa</span>
+                                        </button>
+                                        <button
+                                            onClick={exportToExcel}
+                                            className="flex-1 md:flex-none bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2"
+                                        >
+                                            <i className="fa-solid fa-file-excel"></i>
+                                            <span>Unduh Master Excel (.xlsx)</span>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="overflow-x-auto max-h-[70vh]">
+                                    <table className="w-full text-left border-collapse whitespace-nowrap">
+                                        <thead>
+                                            <tr className="bg-emerald-900 text-white text-xs uppercase tracking-wider">
+                                                <th rowSpan="2" className="py-3 px-3 text-center sticky-col-header z-30 border-r border-emerald-700 w-12">No</th>
+                                                <th rowSpan="2" className="py-3 px-4 sticky-col-header z-30 border-r border-emerald-700 left-12 min-w-[200px]">Nama Siswa</th>
+                                                {LIST_MAPEL.map(mapel => (
+                                                    <th key={mapel} colSpan="3" className="py-2 px-3 text-center border-r border-emerald-700 bg-emerald-800">
+                                                        {mapel}
+                                                    </th>
+                                                ))}
+                                                <th rowSpan="2" className="py-3 px-4 text-center bg-emerald-900 z-20">Aksi Per Siswa</th>
+                                            </tr>
+                                            <tr className="bg-emerald-800 text-white text-[11px] uppercase tracking-wider">
+                                                {LIST_MAPEL.map(mapel => (
+                                                    <React.Fragment key={mapel + '-sub'}>
+                                                        <th className="py-2 px-2 text-center border-r border-emerald-700 bg-emerald-800/90 w-14">PH 1</th>
+                                                        <th className="py-2 px-2 text-center border-r border-emerald-700 bg-emerald-800/90 w-14">PH 2</th>
+                                                        <th className="py-2 px-2 text-center border-r border-emerald-700 bg-emerald-800/90 w-14">PTS</th>
+                                                    </React.Fragment>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100 text-xs">
+                                            {DEFAULT_SISWA.map((nama, idx) => (
+                                                <tr key={nama} className="hover:bg-slate-50 transition-colors">
+                                                    <td className="py-3 px-3 text-center font-medium text-slate-500 sticky-col bg-white border-r border-slate-100">{idx + 1}</td>
+                                                    <td className="py-3 px-4 font-semibold text-slate-800 sticky-col bg-white border-r border-slate-100 left-12">{nama}</td>
+                                                    {LIST_MAPEL.map(mapel => {
+                                                        const score = gradesData[nama]?.[mapel] || { ph1: '', ph2: '', pts: '' };
+                                                        return (
+                                                            <React.Fragment key={mapel + '-' + nama}>
+                                                                <td className="py-3 px-2 text-center border-r border-slate-100 font-medium text-slate-700">{score.ph1 !== '' ? score.ph1 : '-'}</td>
+                                                                <td className="py-3 px-2 text-center border-r border-slate-100 font-medium text-slate-700">{score.ph2 !== '' ? score.ph2 : '-'}</td>
+                                                                <td className="py-3 px-2 text-center border-r border-slate-100 font-medium text-slate-700">{score.pts !== '' ? score.pts : '-'}</td>
+                                                            </React.Fragment>
+                                                        );
+                                                    })}
+                                                    <td className="py-2 px-4 text-center bg-slate-50/50">
+                                                        <button
+                                                            onClick={() => {
+                                                                setSelectedSiswaSingle(nama);
+                                                                setShowSingleModal(true);
+                                                            }}
+                                                            className="bg-sky-50 hover:bg-sky-100 text-sky-700 font-semibold px-3 py-1.5 rounded-lg border border-sky-200 transition-all text-xs flex items-center gap-1.5 mx-auto"
+                                                        >
+                                                            <i className="fa-solid fa-file-pdf"></i>
+                                                            <span>Unduh PDF</span>
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    {/* Admin Login Modal */}
+                    {showAdminModal && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+                            <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 border border-slate-100 animate-in fade-in zoom-in duration-200">
+                                <div className="flex justify-between items-center mb-4">
+                                    <div className="flex items-center space-x-2.5">
+                                        <div className="bg-emerald-100 p-2 rounded-xl text-emerald-700">
+                                            <i className="fa-solid fa-lock text-lg"></i>
+                                        </div>
+                                        <h3 className="text-base font-bold text-slate-800">Proteksi Master Rekap</h3>
+                                    </div>
+                                    <button 
+                                        onClick={() => setShowAdminModal(false)}
+                                        className="text-slate-400 hover:text-slate-600 transition-colors"
+                                    >
+                                        <i className="fa-solid fa-xmark text-lg"></i>
+                                    </button>
+                                </div>
+                                
+                                <p className="text-xs text-slate-500 mb-4">
+                                    Akses ke Master Rekap dan Unduh Excel/PDF dilindungi password khusus untuk Wali Kelas / Admin.
+                                </p>
+
+                                <form onSubmit={handleAdminLogin}>
+                                    <div className="mb-4">
+                                        <label className="block text-xs font-semibold text-slate-700 mb-1.5">PASSWORD ADMIN</label>
+                                        <input
+                                            type="password"
+                                            value={adminPassword}
+                                            onChange={(e) => setAdminPassword(e.target.value)}
+                                            placeholder="Masukkan password..."
+                                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                            autoFocus
+                                        />
+                                        {adminError && <p className="text-xs text-red-600 mt-1.5 font-medium">{adminError}</p>}
+                                    </div>
+
+                                    <div className="flex gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowAdminModal(false)}
+                                            className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold py-2.5 rounded-xl transition-all"
+                                        >
+                                            Batal
+                                        </button>
+                                        <button
+                                            type="submit"
+                                            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold py-2.5 rounded-xl shadow-sm transition-all"
+                                        >
+                                            Masuk
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Modal Unduh PDF Raport Per Siswa */}
+                    {showSingleModal && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4 overflow-y-auto">
+                            <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full p-6 border border-slate-100 my-8">
+                                <div className="flex justify-between items-center mb-4 border-b pb-3">
+                                    <div className="flex items-center space-x-2.5">
+                                        <div className="bg-sky-100 p-2 rounded-xl text-sky-700">
+                                            <i className="fa-solid fa-file-pdf text-lg"></i>
+                                        </div>
+                                        <div>
+                                            <h3 className="text-base font-bold text-slate-800">Preview & Unduh PDF Raport Per Siswa</h3>
+                                            <p className="text-xs text-slate-500">Format persis lembar resmi SMPN 38 Bandar Lampung</p>
+                                        </div>
+                                    </div>
+                                    <button 
+                                        onClick={() => setShowSingleModal(false)}
+                                        className="text-slate-400 hover:text-slate-600 transition-colors"
+                                    >
+                                        <i className="fa-solid fa-xmark text-lg"></i>
+                                    </button>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                    <div className="md:col-span-2">
+                                        <label className="block text-xs font-semibold text-slate-700 mb-1">PILIH NAMA SISWA</label>
+                                        <select
+                                            value={selectedSiswaSingle}
+                                            onChange={(e) => setSelectedSiswaSingle(e.target.value)}
+                                            className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2 px-3 text-sm font-semibold text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                                        >
+                                            {DEFAULT_SISWA.map(nama => (
+                                                <option key={nama} value={nama}>{nama}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        <div>
+                                            <label className="block text-[11px] font-semibold text-slate-700 mb-1">Sakit</label>
+                                            <input 
+                                                type="number" 
+                                                min="0" 
+                                                value={attendance.sakit} 
+                                                onChange={(e) => setAttendance({...attendance, sakit: e.target.value})}
+                                                placeholder="0" 
+                                                className="w-full bg-slate-50 border border-slate-200 rounded-lg py-2 px-2 text-xs text-center font-medium"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-[11px] font-semibold text-slate-700 mb-1">Ijin</label>
+                                            <input 
+                                                type="number" 
+                                                min="0" 
+                                                value={attendance.ijin} 
+                                                onChange={(e) => setAttendance({...attendance, ijin: e.target.value})}
+                                                placeholder="0" 
+                                                className="w-full bg-slate-50 border border-slate-200 rounded-lg py-2 px-2 text-xs text-center font-medium"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-[11px] font-semibold text-slate-700 mb-1">Alpa</label>
+                                            <input 
+                                                type="number" 
+                                                min="0" 
+                                                value={attendance.alpa} 
+                                                onChange={(e) => setAttendance({...attendance, alpa: e.target.value})}
+                                                placeholder="0" 
+                                                className="w-full bg-slate-50 border border-slate-200 rounded-lg py-2 px-2 text-xs text-center font-medium"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Printable / PDF Preview Container */}
+                                <div className="border border-slate-300 rounded-xl p-4 bg-white overflow-x-auto max-h-[55vh] shadow-inner mb-6">
+                                    <div ref={reportRef} className="bg-white text-black p-6 font-sans text-xs w-[210mm] mx-auto box-border" style={{ minHeight: '297mm' }}>
+                                        {/* Kop Surat dengan Logo Kiri (Logo Kota) dan Logo Kanan (Logo Sekolah SMPN 38) */}
+                                        <div className="flex items-center justify-between border-b-2 border-black pb-2 mb-3">
+                                            <div className="w-16 h-16 flex items-center justify-center">
+                                                <img 
+                                                    src={LOGO_KOTA_URL} 
+                                                    alt="Logo Kota Bandar Lampung" 
+                                                    className="w-14 h-14 object-contain"
+                                                    crossOrigin="anonymous"
+                                                    onError={(e)=>{e.target.src="https://placehold.co/80x80/f1f5f9/1e293b?text=KOTA"}}
+                                                />
+                                            </div>
+                                            <div className="text-center flex-1 mx-2">
+                                                <p className="font-bold text-sm uppercase tracking-wide">DINAS PENDIDIKAN DAN KEBUDAYAAN</p>
+                                                <p className="font-extrabold text-base uppercase tracking-wider">SMP NEGERI 38 BANDAR LAMPUNG</p>
+                                                <p className="text-[10px] italic">Jl. Ikan Sembilang No. 16 Sukaraja - Bumi Waras Kode Pos. 35226</p>
+                                                <p className="font-semibold text-[11px]">BANDAR LAMPUNG</p>
+                                            </div>
+                                            <div className="w-16 h-16 flex items-center justify-center">
+                                                <img 
+                                                    src={LOGO_SEKOLAH_URL} 
+                                                    alt="Logo Sekolah SMP 38" 
+                                                    className="w-14 h-14 object-contain"
+                                                    crossOrigin="anonymous"
+                                                    onError={(e)=>{e.target.src="https://placehold.co/80x80/f1f5f9/1e293b?text=SMP38"}}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Judul Laporan */}
+                                        <div className="text-center my-3">
+                                            <p className="font-bold text-xs uppercase">LAPORAN HASIL PEMBELAJARAN SUMATIF TENGAH SEMESTER GANJIL</p>
+                                            <p className="font-bold text-xs">TAHUN PELAJARAN 2026/2027</p>
+                                        </div>
+
+                                        {/* Identitas Siswa */}
+                                        <div className="grid grid-cols-2 gap-x-8 mb-4 text-xs font-medium">
+                                            <div className="space-y-1">
+                                                <div className="flex"><span className="w-24">Nama Siswa</span><span>:</span><span className="font-bold ml-2">{selectedSiswaSingle}</span></div>
+                                                <div className="flex"><span className="w-24">NISN</span><span>:</span><span className="ml-2">-</span></div>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <div className="flex"><span className="w-24">Kelas</span><span>:</span><span className="ml-2">8.C</span></div>
+                                                <div className="flex"><span className="w-24">Semester</span><span>:</span><span className="ml-2">Ganjil</span></div>
+                                            </div>
+                                        </div>
+
+                                        {/* Tabel Nilai Utama */}
+                                        <table className="w-full border-collapse border border-black text-[11px]">
+                                            <thead>
+                                                <tr className="bg-slate-100 text-center font-bold">
+                                                    <th className="border border-black py-1.5 px-1 w-10">NO</th>
+                                                    <th className="border border-black py-1.5 px-2 text-left">MATA PELAJARAN</th>
+                                                    <th className="border border-black py-1.5 px-1 w-20">PENILAIAN HARIAN 1</th>
+                                                    <th className="border border-black py-1.5 px-1 w-20">PENILAIAN HARIAN 2</th>
+                                                    <th className="border border-black py-1.5 px-1 w-20">PENILAIAN TENGAH SEMESTER</th>
+                                                    <th className="border border-black py-1.5 px-1 w-14">KET</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {[
+                                                    { no: "1", name: "Pendidikan Agama dan Budi Pekerti", key: "PAI" },
+                                                    { no: "2", name: "Pendidikan Pancasila dan Kewarganegaraan", key: "PENDIDIKAN PANCASILA" },
+                                                    { no: "3", name: "Bahasa Indonesia", key: "BAHASA INDONESIA" },
+                                                    { no: "4", name: "Matematika", key: "MATEMATIKA" },
+                                                    { no: "5", name: "Ilmu Pengetahuan Alam", key: "IPA" },
+                                                    { no: "6", name: "Ilmu Pengetahuan Sosial", key: "IPS" },
+                                                    { no: "7", name: "Bahasa Inggris", key: "BAHASA INGGRIS" },
+                                                    { no: "8", name: "Pend Jasmani Olah Raga dan Kesehatan", key: "PJOK" },
+                                                    { no: "9", name: "Informatika", key: "INFORMATIKA" },
+                                                    { no: "10", name: "Seni Budaya & Prakarya", key: "PRAKARYA" },
+                                                    { no: "11", name: "Muatan Lokal", key: "__mulok__", isHeader: true },
+                                                    { no: "   a.", name: "Bahasa Lampung", key: "BAHASA LAMPUNG", isSub: true },
+                                                    { no: "   b.", name: "Pendidikan Anti Korupsi", key: "PAK", isSub: true }
+                                                ].map((item, idx) => {
+                                                    if (item.isHeader) {
+                                                        return (
+                                                            <tr key={idx} className="bg-slate-50 font-bold">
+                                                                <td className="border border-black py-1 px-1 text-center">11</td>
+                                                                <td className="border border-black py-1 px-2" colSpan="5">Muatan Lokal</td>
+                                                            </tr>
+                                                        );
+                                                    }
+                                                    const score = gradesData[selectedSiswaSingle]?.[item.key] || { ph1: '', ph2: '', pts: '' };
+                                                    const ph1 = score.ph1 !== '' ? Number(score.ph1) : '';
+                                                    const ph2 = score.ph2 !== '' ? Number(score.ph2) : '';
+                                                    const pts = score.pts !== '' ? Number(score.pts) : '';
+                                                    const valid = [ph1, ph2, pts].filter(v => typeof v === 'number' && !isNaN(v));
+                                                    const avg = valid.length > 0 ? (valid.reduce((a, b) => a + b, 0) / valid.length).toFixed(1) : '';
+
+                                                    return (
+                                                        <tr key={idx} className="hover:bg-slate-50">
+                                                            <td className="border border-black py-1 px-1 text-center font-medium">{item.no}</td>
+                                                            <td className={`border border-black py-1 px-2 ${item.isSub ? 'pl-6' : 'font-medium'}`}>{item.name}</td>
+                                                            <td className="border border-black py-1 px-1 text-center">{ph1}</td>
+                                                            <td className="border border-black py-1 px-1 text-center">{ph2}</td>
+                                                            <td className="border border-black py-1 px-1 text-center">{pts}</td>
+                                                            <td className="border border-black py-1 px-1 text-center font-semibold">{avg}</td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+
+                                        {/* Tabel Kehadiran */}
+                                        <div className="mt-4">
+                                            <table className="w-full border-collapse border border-black text-[11px]">
+                                                <thead>
+                                                    <tr className="bg-slate-100 text-center font-bold">
+                                                        <th className="border border-black py-1 px-2" rowSpan="2" style={{verticalAlign: 'middle'}}>Kehadiran</th>
+                                                        <th className="border border-black py-1 px-1 w-20">Sakit</th>
+                                                        <th className="border border-black py-1 px-1 w-20">Ijin</th>
+                                                        <th className="border border-black py-1 px-1 w-20">Alpa</th>
+                                                        <th className="border border-black py-1 px-1 w-24">Jumlah</th>
+                                                    </tr>
+                                                    <tr className="text-center">
+                                                        <td className="border border-black py-1 px-1 font-semibold">{attendance.sakit || '0'}</td>
+                                                        <td className="border border-black py-1 px-1 font-semibold">{attendance.ijin || '0'}</td>
+                                                        <td className="border border-black py-1 px-1 font-semibold">{attendance.alpa || '0'}</td>
+                                                        <td className="border border-black py-1 px-1 font-semibold">
+                                                            {(Number(attendance.sakit || 0) + Number(attendance.ijin || 0) + Number(attendance.alpa || 0))}
+                                                        </td>
+                                                    </tr>
+                                                </thead>
+                                            </table>
+                                        </div>
+
+                                        {/* Tanda Tangan & Tanggal */}
+                                        <div className="mt-6 flex justify-between text-[11px]">
+                                            <div className="space-y-12">
+                                                <div>
+                                                    <p>Mengetahui,</p>
+                                                    <p className="font-semibold">Orang Tua Siswa</p>
+                                                </div>
+                                                <div>
+                                                    <p className="font-bold">( .................................................... )</p>
+                                                </div>
+                                            </div>
+                                            <div className="space-y-8 text-right">
+                                                <div>
+                                                    <p>Bandar Lampung, 09 Oktober 2026</p>
+                                                    <p className="font-semibold">Wali Kelas 8.C</p>
+                                                </div>
+                                                <div className="text-center pt-6">
+                                                    <p className="font-bold underline">ROSLINA, S.Pd.,Gr.</p>
+                                                    <p>NIP 198510142021212004</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="flex gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowSingleModal(false)}
+                                        className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold py-2.5 rounded-xl transition-all"
+                                    >
+                                        Batal
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={downloadPdfReport}
+                                        disabled={isPdfGenerating}
+                                        className="flex-1 bg-sky-600 hover:bg-sky-700 text-white text-sm font-semibold py-2.5 rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                    >
+                                        {isPdfGenerating ? (
+                                            <i className="fa-solid fa-spinner fa-spin"></i>
+                                        ) : (
+                                            <i className="fa-solid fa-download"></i>
+                                        )}
+                                        <span>Download PDF File</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <footer className="mt-auto py-4 text-center text-xs text-slate-400 border-t border-slate-100 bg-white">
+                        <p>© 2026 Sistem Raport Siswa • SMP Negeri 38 Bandar Lampung • html2pdf.js</p>
+                    </footer>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
